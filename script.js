@@ -27,26 +27,31 @@ function showResults(category) {
     document.getElementById('results-page').classList.add('active');
     
     const resultsContent = document.getElementById('results-content');
-    resultsContent.innerHTML = '<div class="loading">Loading inspiration...</div>';
     
-    // Fetch content based on category
-    fetchContent(category).then(data => {
-        displayResults(category, data);
-    }).catch(error => {
-        resultsContent.innerHTML = `
-            <div style="text-align: center; color: #e74c3c;">
-                <p style="font-size: 1.2rem; margin-bottom: 1rem;">Oops! Something went wrong.</p>
-                <p>${error.message}</p>
-                <button onclick="showSplash()" style="margin-top: 1rem; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Try Again</button>
-            </div>
-        `;
-    });
+    // Show filter options for food category
+    if (category === 'food') {
+        showFoodFilters(resultsContent);
+    } else {
+        resultsContent.innerHTML = '<div class="loading">Loading inspiration...</div>';
+        // Fetch content based on category
+        fetchContent(category).then(data => {
+            displayResults(category, data);
+        }).catch(error => {
+            resultsContent.innerHTML = `
+                <div style="text-align: center; color: #e74c3c;">
+                    <p style="font-size: 1.2rem; margin-bottom: 1rem;">Oops! Something went wrong.</p>
+                    <p>${error.message}</p>
+                    <button onclick="showSplash()" style="margin-top: 1rem; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Try Again</button>
+                </div>
+            `;
+        });
+    }
 }
 
-async function fetchContent(category) {
+async function fetchContent(category, options = {}) {
     switch(category) {
         case 'food':
-            return await fetchFood();
+            return await fetchFood(options.cuisine, options.category, options.ingredient);
         case 'music':
             return await fetchMusic();
         case 'writing':
@@ -57,11 +62,42 @@ async function fetchContent(category) {
 }
 
 // Food API - Using TheMealDB (free, no API key needed)
-async function fetchFood() {
+async function fetchFood(cuisine = null, category = null, ingredient = null) {
     try {
-        const response = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
-        const data = await response.json();
-        const meal = data.meals[0];
+        let meal;
+        
+        // If all filters are null/empty, get completely random meal
+        if (!cuisine && !category && !ingredient) {
+            const response = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
+            const data = await response.json();
+            meal = data.meals[0];
+        } else {
+            // Use filter endpoint - returns basic info, need to lookup full details
+            let filterUrl = 'https://www.themealdb.com/api/json/v1/1/filter.php?';
+            
+            if (cuisine && cuisine !== 'random') {
+                filterUrl += `a=${encodeURIComponent(cuisine)}`;
+            } else if (category && category !== 'random') {
+                filterUrl += `c=${encodeURIComponent(category)}`;
+            } else if (ingredient && ingredient !== 'random') {
+                filterUrl += `i=${encodeURIComponent(ingredient)}`;
+            }
+            
+            const filterResponse = await fetch(filterUrl);
+            const filterData = await filterResponse.json();
+            
+            if (!filterData.meals || filterData.meals.length === 0) {
+                throw new Error('No recipes found with those filters. Try a different selection.');
+            }
+            
+            // Pick a random meal from filtered results
+            const randomMeal = filterData.meals[Math.floor(Math.random() * filterData.meals.length)];
+            
+            // Get full details using lookup
+            const lookupResponse = await fetch(`https://www.themealdb.com/api/json/v1/1/lookup.php?i=${randomMeal.idMeal}`);
+            const lookupData = await lookupResponse.json();
+            meal = lookupData.meals[0];
+        }
         
         return {
             title: meal.strMeal,
@@ -73,7 +109,140 @@ async function fetchFood() {
             source: meal.strSource
         };
     } catch (error) {
-        throw new Error('Failed to fetch recipe. Please try again.');
+        throw new Error(error.message || 'Failed to fetch recipe. Please try again.');
+    }
+}
+
+// Fetch lists for dropdowns
+async function fetchCategories() {
+    try {
+        const response = await fetch('https://www.themealdb.com/api/json/v1/1/list.php?c=list');
+        const data = await response.json();
+        return data.meals.map(item => item.strCategory).sort();
+    } catch (error) {
+        return [];
+    }
+}
+
+async function fetchAreas() {
+    try {
+        const response = await fetch('https://www.themealdb.com/api/json/v1/1/list.php?a=list');
+        const data = await response.json();
+        return data.meals.map(item => item.strArea).sort();
+    } catch (error) {
+        return [];
+    }
+}
+
+async function fetchIngredients() {
+    try {
+        const response = await fetch('https://www.themealdb.com/api/json/v1/1/list.php?i=list');
+        const data = await response.json();
+        return data.meals.map(item => item.strIngredient).sort();
+    } catch (error) {
+        return [];
+    }
+}
+
+// Show food filter selection UI
+async function showFoodFilters(resultsContent) {
+    resultsContent.innerHTML = '<div class="loading">Loading options...</div>';
+    
+    try {
+        const [categories, areas, ingredients] = await Promise.all([
+            fetchCategories(),
+            fetchAreas(),
+            fetchIngredients()
+        ]);
+        
+        const html = `
+            <div class="food-filters">
+                <h2 style="color: #667eea; margin-bottom: 2rem; font-size: 2rem;">Choose Your Recipe Filter</h2>
+                <p style="color: #666; margin-bottom: 2rem;">Select one option below, or choose "Random" for a surprise!</p>
+                
+                <div class="filter-group">
+                    <label for="cuisine-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Cuisine:</label>
+                    <select id="cuisine-select" class="filter-select">
+                        <option value="random">Random</option>
+                        ${areas.map(area => `<option value="${area}">${area}</option>`).join('')}
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label for="category-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Category:</label>
+                    <select id="category-select" class="filter-select">
+                        <option value="random">Random</option>
+                        ${categories.map(cat => `<option value="${cat}">${cat}</option>`).join('')}
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label for="ingredient-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Main Ingredient:</label>
+                    <select id="ingredient-select" class="filter-select">
+                        <option value="random">Random</option>
+                        ${ingredients.map(ing => `<option value="${ing}">${ing}</option>`).join('')}
+                    </select>
+                </div>
+                
+                <button onclick="applyFoodFilter()" class="filter-button">Get Recipe!</button>
+            </div>
+        `;
+        
+        resultsContent.innerHTML = html;
+    } catch (error) {
+        resultsContent.innerHTML = `
+            <div style="text-align: center; color: #e74c3c;">
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;">Oops! Something went wrong.</p>
+                <p>${error.message}</p>
+                <button onclick="showSplash()" style="margin-top: 1rem; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Go Back</button>
+            </div>
+        `;
+    }
+}
+
+// Apply food filter and fetch recipe
+async function applyFoodFilter() {
+    const cuisine = document.getElementById('cuisine-select').value;
+    const category = document.getElementById('category-select').value;
+    const ingredient = document.getElementById('ingredient-select').value;
+    
+    // Determine which filter to use (priority: cuisine > category > ingredient)
+    // If all are "random", we'll pass all nulls for completely random
+    let selectedFilter = null;
+    let filterType = null;
+    
+    if (cuisine && cuisine !== 'random') {
+        selectedFilter = cuisine;
+        filterType = 'cuisine';
+    } else if (category && category !== 'random') {
+        selectedFilter = category;
+        filterType = 'category';
+    } else if (ingredient && ingredient !== 'random') {
+        selectedFilter = ingredient;
+        filterType = 'ingredient';
+    }
+    // If all are "random" or empty, selectedFilter and filterType remain null
+    
+    const resultsContent = document.getElementById('results-content');
+    resultsContent.innerHTML = '<div class="loading">Finding your perfect recipe...</div>';
+    
+    try {
+        const options = {
+            cuisine: filterType === 'cuisine' ? selectedFilter : null,
+            category: filterType === 'category' ? selectedFilter : null,
+            ingredient: filterType === 'ingredient' ? selectedFilter : null
+        };
+        
+        const data = await fetchContent('food', options);
+        displayResults('food', data);
+    } catch (error) {
+        resultsContent.innerHTML = `
+            <div style="text-align: center; color: #e74c3c;">
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;">Oops! Something went wrong.</p>
+                <p>${error.message}</p>
+                <button onclick="showResults('food')" style="margin-top: 1rem; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Try Again</button>
+            </div>
+        `;
     }
 }
 
@@ -211,6 +380,8 @@ ${data.lines.join('\n')}
     resultsContent.innerHTML = html;
 }
 
-// Make showSplash available globally for error handling
+// Make functions available globally
 window.showSplash = showSplash;
+window.showResults = showResults;
+window.applyFoodFilter = applyFoodFilter;
 
