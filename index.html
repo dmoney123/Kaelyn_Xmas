@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How do you want to be inspired?</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Splash Page -->
+    <div id="splash-page" class="page active">
+        <div class="container">
+            <h1 class="title">How do you want to be inspired?</h1>
+            <div class="squares-grid">
+                <div class="square" data-category="food">
+                    <div class="square-content">
+                        <span class="square-icon">🍽️</span>
+                        <span class="square-text">Food</span>
+                    </div>
+                </div>
+                <div class="square" data-category="music">
+                    <div class="square-content">
+                        <span class="square-icon">🎵</span>
+                        <span class="square-text">Music</span>
+                    </div>
+                </div>
+                <div class="square" data-category="writing">
+                    <div class="square-content">
+                        <span class="square-icon">✍️</span>
+                        <span class="square-text">Writing</span>
+                    </div>
+                </div>
+                <div class="square" data-category="surprise">
+                    <div class="square-content">
+                        <span class="square-icon">🎁</span>
+                        <span class="square-text">Surprise Me</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Page -->
+    <div id="results-page" class="page">
+        <div class="container">
+            <button id="back-button" class="back-button">← Back</button>
+            <div id="results-content" class="results-content">
+                <div class="loading">Loading inspiration...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
