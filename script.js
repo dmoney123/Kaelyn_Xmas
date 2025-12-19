@@ -149,8 +149,7 @@ async function showFoodFilters(resultsContent) {
     resultsContent.innerHTML = '<div class="loading">Loading options...</div>';
     
     try {
-        const [categories, areas, ingredients] = await Promise.all([
-            fetchCategories(),
+        const [areas, ingredients] = await Promise.all([
             fetchAreas(),
             fetchIngredients()
         ]);
@@ -169,10 +168,11 @@ async function showFoodFilters(resultsContent) {
                 </div>
                 
                 <div class="filter-group">
-                    <label for="category-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Category:</label>
+                    <label for="category-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Dietary:</label>
                     <select id="category-select" class="filter-select">
-                        <option value="random">Random</option>
-                        ${categories.map(cat => `<option value="${cat}">${cat}</option>`).join('')}
+                        <option value="random">None</option>
+                        <option value="Vegan">Vegan</option>
+                        <option value="Vegetarian">Vegetarian</option>
                     </select>
                 </div>
                 
