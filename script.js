@@ -177,11 +177,9 @@ async function showFoodFilters(resultsContent) {
                 </div>
                 
                 <div class="filter-group">
-                    <label for="ingredient-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Main Ingredient:</label>
-                    <select id="ingredient-select" class="filter-select">
-                        <option value="random">Random</option>
-                        ${ingredients.map(ing => `<option value="${ing}">${ing}</option>`).join('')}
-                    </select>
+                    <label for="ingredient-input" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Main Ingredient:</label>
+                    <input type="text" id="ingredient-input" class="filter-input" placeholder="Type an ingredient (e.g., chicken, pasta, tomatoes) or leave empty for random">
+                    <p style="font-size: 0.85rem; color: #999; margin-top: 0.5rem;">Leave empty for random selection</p>
                 </div>
                 
                 <button onclick="applyFoodFilter()" class="filter-button">Get Recipe!</button>
@@ -204,10 +202,11 @@ async function showFoodFilters(resultsContent) {
 async function applyFoodFilter() {
     const cuisine = document.getElementById('cuisine-select').value;
     const category = document.getElementById('category-select').value;
-    const ingredient = document.getElementById('ingredient-select').value;
+    const ingredientInput = document.getElementById('ingredient-input');
+    const ingredient = ingredientInput ? ingredientInput.value.trim() : '';
     
     // Determine which filter to use (priority: cuisine > category > ingredient)
-    // If all are "random", we'll pass all nulls for completely random
+    // If all are "random" or empty, we'll pass all nulls for completely random
     let selectedFilter = null;
     let filterType = null;
     
@@ -217,7 +216,8 @@ async function applyFoodFilter() {
     } else if (category && category !== 'random') {
         selectedFilter = category;
         filterType = 'category';
-    } else if (ingredient && ingredient !== 'random') {
+    } else if (ingredient && ingredient !== '') {
+        // Use the text input value (case-insensitive, API handles it)
         selectedFilter = ingredient;
         filterType = 'ingredient';
     }
