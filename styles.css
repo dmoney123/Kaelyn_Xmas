@@ -55,10 +55,14 @@ body {
 
 .squares-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(3, 1fr);
     gap: 2rem;
     max-width: 900px;
     margin: 0 auto;
+}
+
+.square-surprise {
+    grid-column: span 3;
 }
 
 .square {
@@ -292,6 +296,10 @@ body {
     
     .square {
         padding: 2rem 1.5rem;
+    }
+    
+    .square-surprise {
+        grid-column: span 1;
     }
     
     .results-content {
