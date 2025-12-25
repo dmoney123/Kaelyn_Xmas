@@ -28,9 +28,11 @@ function showResults(category) {
     
     const resultsContent = document.getElementById('results-content');
     
-    // Show filter options for food category
+    // Show filter options for food and music categories
     if (category === 'food') {
         showFoodFilters(resultsContent);
+    } else if (category === 'music') {
+        showMusicFilters(resultsContent);
     } else {
         resultsContent.innerHTML = '<div class="loading">Loading inspiration...</div>';
         // Fetch content based on category
@@ -53,7 +55,7 @@ async function fetchContent(category, options = {}) {
         case 'food':
             return await fetchFood(options.cuisine, options.category, options.ingredient);
         case 'music':
-            return await fetchMusic();
+            return await fetchMusic(options.genre, options.artist);
         case 'writing':
             return await fetchWriting();
         default:
@@ -66,36 +68,113 @@ async function fetchFood(cuisine = null, category = null, ingredient = null) {
     try {
         let meal;
         
+        // Normalize filter values
+        const hasCuisine = cuisine && cuisine !== 'random';
+        const hasCategory = category && category !== 'random';
+        const hasIngredient = ingredient && ingredient !== '' && ingredient !== 'random';
+        
         // If all filters are null/empty, get completely random meal
-        if (!cuisine && !category && !ingredient) {
+        if (!hasCuisine && !hasCategory && !hasIngredient) {
             const response = await fetch('https://www.themealdb.com/api/json/v1/1/random.php');
             const data = await response.json();
             meal = data.meals[0];
         } else {
-            // Use filter endpoint - returns basic info, need to lookup full details
-            let filterUrl = 'https://www.themealdb.com/api/json/v1/1/filter.php?';
+            // Determine which filter to use for initial API call
+            // Priority: dietary category > ingredient > cuisine (dietary usually has fewer results)
+            let primaryFilter = null;
+            let primaryFilterType = null;
             
-            if (cuisine && cuisine !== 'random') {
-                filterUrl += `a=${encodeURIComponent(cuisine)}`;
-            } else if (category && category !== 'random') {
-                filterUrl += `c=${encodeURIComponent(category)}`;
-            } else if (ingredient && ingredient !== 'random') {
-                filterUrl += `i=${encodeURIComponent(ingredient)}`;
+            if (hasCategory) {
+                primaryFilter = category;
+                primaryFilterType = 'category';
+            } else if (hasIngredient) {
+                primaryFilter = ingredient;
+                primaryFilterType = 'ingredient';
+            } else if (hasCuisine) {
+                primaryFilter = cuisine;
+                primaryFilterType = 'cuisine';
+            }
+            
+            // Build filter URL
+            let filterUrl = 'https://www.themealdb.com/api/json/v1/1/filter.php?';
+            if (primaryFilterType === 'cuisine') {
+                filterUrl += `a=${encodeURIComponent(primaryFilter)}`;
+            } else if (primaryFilterType === 'category') {
+                filterUrl += `c=${encodeURIComponent(primaryFilter)}`;
+            } else if (primaryFilterType === 'ingredient') {
+                filterUrl += `i=${encodeURIComponent(primaryFilter)}`;
             }
             
             const filterResponse = await fetch(filterUrl);
             const filterData = await filterResponse.json();
             
-            if (!filterData.meals || filterData.meals.length === 0) {
+            // TheMealDB returns {meals: null} when no results found
+            if (!filterData || !filterData.meals || filterData.meals === null || 
+                (Array.isArray(filterData.meals) && filterData.meals.length === 0)) {
                 throw new Error('No recipes found with those filters. Try a different selection.');
             }
             
+            // If we have multiple filters, we need to filter client-side
+            let filteredMeals = filterData.meals;
+            
+            if ((hasCuisine && primaryFilterType !== 'cuisine') || 
+                (hasCategory && primaryFilterType !== 'category') || 
+                (hasIngredient && primaryFilterType !== 'ingredient')) {
+                // We have multiple filters - need to lookup and filter
+                const lookupPromises = filteredMeals.slice(0, 20).map(meal => 
+                    fetch(`https://www.themealdb.com/api/json/v1/1/lookup.php?i=${meal.idMeal}`)
+                        .then(res => res.json())
+                        .then(data => data.meals ? data.meals[0] : null)
+                        .catch(() => null)
+                );
+                
+                const fullMeals = await Promise.all(lookupPromises);
+                const validMeals = fullMeals.filter(m => m !== null);
+                
+                // Filter by secondary criteria
+                filteredMeals = validMeals.filter(meal => {
+                    let matches = true;
+                    
+                    if (hasCuisine && primaryFilterType !== 'cuisine') {
+                        matches = matches && meal.strArea === cuisine;
+                    }
+                    if (hasCategory && primaryFilterType !== 'category') {
+                        matches = matches && meal.strCategory === category;
+                    }
+                    if (hasIngredient && primaryFilterType !== 'ingredient') {
+                        // Check if ingredient is in the ingredients list
+                        const ingredients = [];
+                        for (let i = 1; i <= 20; i++) {
+                            const ing = meal[`strIngredient${i}`];
+                            if (ing && ing.trim()) {
+                                ingredients.push(ing.toLowerCase().trim());
+                            }
+                        }
+                        matches = matches && ingredients.some(ing => 
+                            ing.includes(ingredient.toLowerCase()) || 
+                            ingredient.toLowerCase().includes(ing)
+                        );
+                    }
+                    return matches;
+                }).map(meal => ({ idMeal: meal.idMeal }));
+                
+                if (filteredMeals.length === 0) {
+                    throw new Error('No recipes found matching all your filters. Try a different combination.');
+                }
+            }
+            
             // Pick a random meal from filtered results
-            const randomMeal = filterData.meals[Math.floor(Math.random() * filterData.meals.length)];
+            const randomMeal = filteredMeals[Math.floor(Math.random() * filteredMeals.length)];
             
             // Get full details using lookup
             const lookupResponse = await fetch(`https://www.themealdb.com/api/json/v1/1/lookup.php?i=${randomMeal.idMeal}`);
             const lookupData = await lookupResponse.json();
+            
+            // Check if lookup was successful
+            if (!lookupData.meals || lookupData.meals === null || lookupData.meals.length === 0) {
+                throw new Error('Recipe details could not be loaded. Please try again.');
+            }
+            
             meal = lookupData.meals[0];
         }
         
@@ -205,32 +284,15 @@ async function applyFoodFilter() {
     const ingredientInput = document.getElementById('ingredient-input');
     const ingredient = ingredientInput ? ingredientInput.value.trim() : '';
     
-    // Determine which filter to use (priority: cuisine > category > ingredient)
-    // If all are "random" or empty, we'll pass all nulls for completely random
-    let selectedFilter = null;
-    let filterType = null;
-    
-    if (cuisine && cuisine !== 'random') {
-        selectedFilter = cuisine;
-        filterType = 'cuisine';
-    } else if (category && category !== 'random') {
-        selectedFilter = category;
-        filterType = 'category';
-    } else if (ingredient && ingredient !== '') {
-        // Use the text input value (case-insensitive, API handles it)
-        selectedFilter = ingredient;
-        filterType = 'ingredient';
-    }
-    // If all are "random" or empty, selectedFilter and filterType remain null
-    
+    // Pass all selected filters (can combine multiple filters now)
     const resultsContent = document.getElementById('results-content');
     resultsContent.innerHTML = '<div class="loading">Finding your perfect recipe...</div>';
     
     try {
         const options = {
-            cuisine: filterType === 'cuisine' ? selectedFilter : null,
-            category: filterType === 'category' ? selectedFilter : null,
-            ingredient: filterType === 'ingredient' ? selectedFilter : null
+            cuisine: cuisine && cuisine !== 'random' ? cuisine : null,
+            category: category && category !== 'random' ? category : null,
+            ingredient: ingredient && ingredient !== '' ? ingredient : null
         };
         
         const data = await fetchContent('food', options);
@@ -246,9 +308,222 @@ async function applyFoodFilter() {
     }
 }
 
-// Music API - Curated suggestions (can be enhanced with Last.fm API)
-async function fetchMusic() {
-    // Curated list of music discovery suggestions
+// Music API - Using iTunes Search API (free, no API key needed)
+async function fetchMusic(genre = null, artist = null) {
+    try {
+        // If artist filter is on (Bon Iver), search by artist
+        if (artist === 'bon iver') {
+            const response = await fetch(
+                `https://itunes.apple.com/search?term=bon+iver&attribute=artistTerm&media=music&limit=200&entity=song`
+            );
+            const data = await response.json();
+            
+            if (!data.results || data.results.length === 0) {
+                return getFallbackMusicSuggestion();
+            }
+            
+            // Pick a random track from Bon Iver results
+            const randomTrack = data.results[Math.floor(Math.random() * data.results.length)];
+            
+            return {
+                title: randomTrack.trackName || randomTrack.collectionName,
+                artist: randomTrack.artistName,
+                album: randomTrack.collectionName,
+                genre: randomTrack.primaryGenreName,
+                previewUrl: randomTrack.previewUrl,
+                artwork: randomTrack.artworkUrl100 || randomTrack.artworkUrl60,
+                releaseDate: randomTrack.releaseDate
+            };
+        }
+        
+        // Map our genre labels to iTunes genre names and search terms
+        const genreMap = {
+            'pop': { search: 'pop music', genres: ['Pop', 'Dance'] },
+            'rock': { search: 'rock music', genres: ['Rock', 'Alternative'] },
+            'jazz': { search: 'jazz', genres: ['Jazz'] },
+            'hip hop': { search: 'hip hop', genres: ['Hip-Hop/Rap', 'Rap'] },
+            'electronic': { search: 'electronic music', genres: ['Electronic', 'Dance'] },
+            'indie': { search: 'indie', genres: ['Alternative', 'Indie', 'Indie Rock'] },
+            'country': { search: 'country music', genres: ['Country'] },
+            'classical': { search: 'classical music', genres: ['Classical'] },
+            'r&b': { search: 'r&b', genres: ['R&B/Soul', 'Soul', 'R&B'] },
+            'folk': { search: 'folk music', genres: ['Folk', 'Singer/Songwriter'] },
+            'alternative': { search: 'alternative rock', genres: ['Alternative', 'Alternative Rock'] },
+            'blues': { search: 'blues', genres: ['Blues'] },
+            'reggae': { search: 'reggae', genres: ['Reggae'] },
+            'latin': { search: 'latin music', genres: ['Latin', 'Salsa', 'Latin Pop'] },
+            'metal': { search: 'heavy metal', genres: ['Metal', 'Heavy Metal'] },
+            'punk': { search: 'punk rock', genres: ['Punk', 'Punk Rock'] },
+            'soul': { search: 'soul music', genres: ['Soul', 'R&B/Soul'] },
+            'funk': { search: 'funk', genres: ['Funk', 'R&B/Soul'] },
+            'disco': { search: 'disco', genres: ['Disco', 'Dance'] }
+        };
+        
+        let searchTerm;
+        let targetGenres = null;
+        
+        // If genre is provided, use mapped search term and genres
+        if (genre && genre !== 'random' && genreMap[genre]) {
+            searchTerm = genreMap[genre].search;
+            targetGenres = genreMap[genre].genres;
+        } else {
+            // List of popular genres to search for variety
+            const searchTerms = [
+                'pop music', 'rock music', 'jazz', 'hip hop', 'electronic music', 'indie', 
+                'country music', 'classical music', 'r&b', 'folk music', 'alternative rock', 
+                'blues', 'reggae', 'latin music'
+            ];
+            searchTerm = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+        }
+        
+        // Search iTunes for music - get more results to filter from
+        const response = await fetch(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(searchTerm)}&media=music&limit=200&entity=song`
+        );
+        
+        const data = await response.json();
+        
+        if (!data.results || data.results.length === 0) {
+            // Fallback to a curated suggestion if API fails
+            return getFallbackMusicSuggestion();
+        }
+        
+        // Filter by genre if a specific genre was selected
+        let filteredResults = data.results;
+        if (targetGenres && targetGenres.length > 0) {
+            filteredResults = data.results.filter(track => {
+                const trackGenre = track.primaryGenreName || '';
+                return targetGenres.some(genre => 
+                    trackGenre.toLowerCase().includes(genre.toLowerCase()) ||
+                    genre.toLowerCase().includes(trackGenre.toLowerCase())
+                );
+            });
+            
+            // If no results match the genre, try again with broader search
+            if (filteredResults.length === 0) {
+                filteredResults = data.results;
+            }
+        }
+        
+        // Pick a random track from filtered results
+        const randomTrack = filteredResults[Math.floor(Math.random() * filteredResults.length)];
+        
+        return {
+            title: randomTrack.trackName || randomTrack.collectionName,
+            artist: randomTrack.artistName,
+            album: randomTrack.collectionName,
+            genre: randomTrack.primaryGenreName,
+            previewUrl: randomTrack.previewUrl,
+            artwork: randomTrack.artworkUrl100 || randomTrack.artworkUrl60,
+            releaseDate: randomTrack.releaseDate
+        };
+    } catch (error) {
+        // Fallback to curated suggestions if API fails
+        return getFallbackMusicSuggestion();
+    }
+}
+
+// Show music genre selection UI
+function showMusicFilters(resultsContent) {
+    const genres = [
+        { value: 'random', label: 'Random' },
+        { value: 'pop', label: 'Pop' },
+        { value: 'rock', label: 'Rock' },
+        { value: 'jazz', label: 'Jazz' },
+        { value: 'hip hop', label: 'Hip Hop' },
+        { value: 'electronic', label: 'Electronic' },
+        { value: 'indie', label: 'Indie' },
+        { value: 'country', label: 'Country' },
+        { value: 'classical', label: 'Classical' },
+        { value: 'r&b', label: 'R&B' },
+        { value: 'folk', label: 'Folk' },
+        { value: 'alternative', label: 'Alternative' },
+        { value: 'blues', label: 'Blues' },
+        { value: 'reggae', label: 'Reggae' },
+        { value: 'latin', label: 'Latin' },
+        { value: 'metal', label: 'Metal' },
+        { value: 'punk', label: 'Punk' },
+        { value: 'soul', label: 'Soul' },
+        { value: 'funk', label: 'Funk' },
+        { value: 'disco', label: 'Disco' }
+    ];
+    
+    const html = `
+        <div class="food-filters">
+            <h2 style="color: #667eea; margin-bottom: 2rem; font-size: 2rem;">Choose Your Music</h2>
+            <p style="color: #666; margin-bottom: 2rem;">Select a genre below, or choose "Random" for a surprise!</p>
+            
+            <div class="filter-group">
+                <label for="genre-select" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Genre:</label>
+                <select id="genre-select" class="filter-select">
+                    ${genres.map(genre => `<option value="${genre.value}">${genre.label}</option>`).join('')}
+                </select>
+            </div>
+            
+            <div class="filter-group">
+                <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: #333;">Artist Filter:</label>
+                <button id="artist-toggle" onclick="toggleArtistFilter()" class="artist-toggle-button" style="width: 100%; padding: 12px 16px; font-size: 1rem; border: 2px solid #e0e0e0; border-radius: 8px; background: white; color: #333; cursor: pointer; transition: all 0.3s ease; font-family: inherit;">
+                    Press for Bon Iver Only
+                </button>
+            </div>
+            
+            <button onclick="applyMusicFilter()" class="filter-button">Get Music!</button>
+        </div>
+    `;
+    
+    resultsContent.innerHTML = html;
+}
+
+// Toggle artist filter between Bon Iver and All Artists
+function toggleArtistFilter() {
+    const button = document.getElementById('artist-toggle');
+    const currentState = button.dataset.artist || 'all';
+    
+    if (currentState === 'all') {
+        button.dataset.artist = 'bon iver';
+        button.textContent = 'Bon Iver Only (Active)';
+        button.style.background = '#667eea';
+        button.style.color = 'white';
+        button.style.borderColor = '#667eea';
+    } else {
+        button.dataset.artist = 'all';
+        button.textContent = 'Press for Bon Iver Only';
+        button.style.background = 'white';
+        button.style.color = '#333';
+        button.style.borderColor = '#e0e0e0';
+    }
+}
+
+// Apply music filter and fetch track
+async function applyMusicFilter() {
+    const genre = document.getElementById('genre-select').value;
+    const artistButton = document.getElementById('artist-toggle');
+    const artist = artistButton && artistButton.dataset.artist === 'bon iver' ? 'bon iver' : null;
+    
+    const resultsContent = document.getElementById('results-content');
+    resultsContent.innerHTML = '<div class="loading">Finding your perfect track...</div>';
+    
+    try {
+        const options = {
+            genre: genre && genre !== 'random' ? genre : null,
+            artist: artist
+        };
+        
+        const data = await fetchContent('music', options);
+        displayResults('music', data);
+    } catch (error) {
+        resultsContent.innerHTML = `
+            <div style="text-align: center; color: #e74c3c;">
+                <p style="font-size: 1.2rem; margin-bottom: 1rem;">Oops! Something went wrong.</p>
+                <p>${error.message}</p>
+                <button onclick="showResults('music')" style="margin-top: 1rem; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Try Again</button>
+            </div>
+        `;
+    }
+}
+
+// Fallback music suggestions if iTunes API fails
+function getFallbackMusicSuggestion() {
     const suggestions = [
         {
             title: 'Explore Indie Pop',
@@ -282,7 +557,6 @@ async function fetchMusic() {
         }
     ];
     
-    // Return a random suggestion
     const randomSuggestion = suggestions[Math.floor(Math.random() * suggestions.length)];
     
     return {
@@ -339,18 +613,36 @@ function displayResults(category, data) {
             </div>
         `;
     } else if (category === 'music') {
-        html = `
-            <div class="result-item">
-                <h2 class="result-title">${data.title}</h2>
-                <div class="result-meta">${data.artist}</div>
-                <div class="result-description">${data.description}</div>
-                <div style="margin-top: 1.5rem;">
-                    <p style="margin-bottom: 0.5rem; font-weight: 600; color: #667eea;">Genres to explore:</p>
-                    ${data.genres.map(genre => `<span style="display: inline-block; margin: 0.5rem; padding: 0.5rem 1rem; background: #f0f0f0; border-radius: 5px; color: #667eea;">${genre}</span>`).join('')}
+        // Check if it's iTunes API data or fallback suggestion
+        if (data.previewUrl || data.artwork) {
+            // iTunes API result
+            html = `
+                <div class="result-item">
+                    ${data.artwork ? `<img src="${data.artwork.replace('100x100', '300x300')}" alt="${data.title}" style="max-width: 200px; border-radius: 10px; margin-bottom: 1rem; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">` : ''}
+                    <h2 class="result-title">${data.title}</h2>
+                    <div class="result-meta">by ${data.artist}</div>
+                    ${data.album ? `<div class="result-meta" style="margin-top: 0.5rem;">Album: ${data.album}</div>` : ''}
+                    ${data.genre ? `<div style="margin-top: 1rem;"><span style="display: inline-block; padding: 0.5rem 1rem; background: #f0f0f0; border-radius: 5px; color: #667eea; font-weight: 600;">${data.genre}</span></div>` : ''}
+                    <div style="margin-top: 1.5rem;">
+                        ${data.previewUrl ? `<a href="${data.previewUrl}" target="_blank" class="result-link" style="padding: 10px 20px; background: #667eea; color: white; border-radius: 5px; text-decoration: none; display: inline-block;">▶ Preview</a>` : ''}
+                    </div>
                 </div>
-                <p style="margin-top: 1.5rem; color: #667eea; font-weight: 600;">Search on Spotify, Apple Music, or YouTube Music!</p>
-            </div>
-        `;
+            `;
+        } else {
+            // Fallback suggestion
+            html = `
+                <div class="result-item">
+                    <h2 class="result-title">${data.title}</h2>
+                    <div class="result-meta">${data.artist}</div>
+                    <div class="result-description">${data.description}</div>
+                    <div style="margin-top: 1.5rem;">
+                        <p style="margin-bottom: 0.5rem; font-weight: 600; color: #667eea;">Genres to explore:</p>
+                        ${data.genres.map(genre => `<span style="display: inline-block; margin: 0.5rem; padding: 0.5rem 1rem; background: #f0f0f0; border-radius: 5px; color: #667eea;">${genre}</span>`).join('')}
+                    </div>
+                    <p style="margin-top: 1.5rem; color: #667eea; font-weight: 600;">Search on Spotify, Apple Music, or YouTube Music!</p>
+                </div>
+            `;
+        }
     } else if (category === 'writing') {
         if (data.lines) {
             // Poetry
@@ -384,4 +676,6 @@ ${data.lines.join('\n')}
 window.showSplash = showSplash;
 window.showResults = showResults;
 window.applyFoodFilter = applyFoodFilter;
+window.applyMusicFilter = applyMusicFilter;
+window.toggleArtistFilter = toggleArtistFilter;
 
